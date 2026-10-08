@@ -2,8 +2,8 @@ MIT License
 
 Copyright (c) 2026 Monster Trail contributors
 
-This license applies to source code and tooling. Artwork, including assets/ and art-reviews/, is excluded;
-see ASSET_LICENSE.md. Third-party components retain their own licenses.
+This license applies to source code and tooling. Visual assets and local design
+documents are not included in this repository. Third-party components retain their own licenses.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
