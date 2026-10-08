@@ -53,7 +53,9 @@ https://openai.com/policies/business-terms/
 - 무료 저장소/릴리스 용량 내에서 배포. 유료 CI·클라우드·스토어 가입은 하지 않기.
 
 **현재 결론:** 엔진 선택에는 무료 사용·게임 배포를 막는 라이선스 제한을 찾지
-못했다. 다만 게임 전체의 저작권 검토가 완료된 상태는 아니다. 공개 배포 없음.
+못했다. 다만 게임 전체의 저작권 검토가 완료된 상태는 아니다. 게임 실행 파일 배포 없음.
+2026-10-08 사용자 요청으로 개발 소스·문서·현재 시안을 GitHub 공개 저장소
+https://github.com/93TEI/pixel-game 에 게시했다. 사용자 참고 원본은 제외했다.
 
 Galmuri 원문 확인: https://raw.githubusercontent.com/quiple/galmuri/main/ofl.md
 공식 파일: https://raw.githubusercontent.com/quiple/galmuri/main/dist/Galmuri11.ttf

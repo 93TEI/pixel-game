@@ -71,4 +71,13 @@ dote.md와 사용자 참고 R04/R01/R07을 실제로 열고 저장된 review.png
 
 게임 범위: docs/GAME_DESIGN.md. 종 설정: docs/CONTENT_BIBLE.md.
 시각 필수 기준: dote.md. 비용/권리: docs/LICENSE_REVIEW.md.
-유료 이미지 서비스·새 의존성·배포 없음. 공개 Git 저장소는 아직 없다.
+유료 이미지 서비스·새 의존성·게임 실행 파일 배포 없음.
+
+## GitHub 공개 저장소 — 2026-10-08
+
+사용자의 명시적인 공개 업로드 요청으로 `pixel-game` 저장소를 생성했다.
+주소: https://github.com/93TEI/pixel-game (`main`, public).
+최초 커밋 `e62206a` 업로드 완료. 소스·200종 데이터·문서·현재 시안·검사를 포함한다.
+로컬 엔진·캐시·빌드·저장 데이터·사용자 참고 원본은 포함하지 않는다.
+README의 공개 이름은 Pixel Game이며 게임 내 작업명은 Monster Trail로 유지했다.
+공개 업로드는 세 시안의 미술 승인이나 게임 통합 승인을 뜻하지 않는다.
