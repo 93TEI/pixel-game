@@ -1,0 +1,15 @@
+.godot/
+tools/godot/
+build/
+*.DS_Store
+__pycache__/
+assets/concepts/
+tests/artifacts/
+references/user/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+saves/
+*.log
