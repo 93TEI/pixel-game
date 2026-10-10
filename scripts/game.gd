@@ -7,10 +7,11 @@ signal autosave_requested
 signal actor_action(mon: Dictionary, action: String, origin: Vector2, toward: Vector2)
 signal field_reset
 
-const VERSION = 1
+const VERSION = 3
 const STAT_NAMES = ["체력", "공격", "방어", "특공", "특방", "속도"]
 const SLOT_COUNTS = {"D": 1, "C": 2, "B": 3, "A": 4, "S": 4}
 const WORLD_SIZE = Vector2(2048, 1280)
+const CAST_RANGE_GRACE = 18.0
 var catalog: Dictionary
 var species: Dictionary = {}
 var rng = RandomNumberGenerator.new()
@@ -71,8 +72,8 @@ func new_game(seed_value: int = 147207) -> void:
     tool_grade = 1
     play_time = 0
     counters = {"captures": 0, "battles": 0, "bosses": 0, "evolutions": 0}
-    party.append(make_monster("m001", 5))
-    caught.append("m001")
+    party.append(make_monster("m495", 5))
+    caught.append("m495")
     reset_field()
 
 func spec(mon: Dictionary) -> Dictionary:
@@ -137,9 +138,10 @@ func reset_field() -> void:
     recalling = false
     enemies.clear()
     var candidates = region_species()
-    # Minimal pixel prototype: first-field encounters use the newly authored Leafling.
-    if region == 0:
-        candidates = ["m001"]
+    # Young regional species populate ordinary habitats; their evolutions remain
+    # obtainable through growth rather than appearing below their evolution level.
+    candidates = candidates.filter(func(sid): return int(species[sid].stage) == 0)
+    candidates = catalog.regions[region].get("wild_species", candidates)
     for i in 14:
         var sid = candidates[i % candidates.size()]
         var level = int(catalog.regions[region].level_min) + rng.randi_range(0, 3)
@@ -157,7 +159,7 @@ func region_species() -> Array:
 func spawn_enemy(sid: String, level: int, p: Vector2, is_boss: bool) -> Dictionary:
     var mon = make_monster(sid, level)
     if is_boss:
-        mon.hp = max_hp(mon) * (2.2 if catalog.regions[region].boss_kind == "wild" else 1.4)
+        mon.hp = max_hp(mon) * boss_hp_multiplier()
     var enemy = {"mon": mon, "pos": p, "home": p, "boss": is_boss,
         "max_hp": mon.hp, "attack_timer": rng.randf_range(.4, 1.2), "cast": {},
         "alert": is_boss, "walk": Vector2.ZERO}
@@ -177,6 +179,8 @@ func command_attack(uid: String) -> void:
         return
     var enemy = enemy_by_id(uid)
     if not enemy.is_empty():
+        if target_id != uid:
+            cast.clear()
         target_id = uid
         recalling = false
         enemy.alert = true
@@ -311,12 +315,24 @@ func update_ai() -> void:
 
 func tick_companion_attack(target: Dictionary, dt: float) -> void:
     var mon = current()
+    if mon.hp <= 0 or target.mon.hp <= 0:
+        cast.clear()
+        return
     if not clear_attack_path(companion, target.pos):
         cast.clear()
         return
+    # Basic attacks have their own clock, including during skill windup.
+    if basic_timer <= 0 and companion.distance_to(target.pos) <= 78:
+        var damage = damage_for(mon, target.mon, 9, false)
+        actor_action.emit(mon, "attack", companion, target.pos)
+        hurt(target.mon, damage, target.pos)
+        basic_timer = 1.15
+        if target.mon.hp <= 0:
+            defeat_enemy(target)
+            return
     if not cast.is_empty():
         var skill = catalog.skills[cast.skill]
-        if companion.distance_to(target.pos) > float(skill.range) + 18:
+        if companion.distance_to(target.pos) > float(skill.range) + CAST_RANGE_GRACE:
             cast.clear()
             return
         cast.time -= dt
@@ -340,13 +356,6 @@ func tick_companion_attack(target: Dictionary, dt: float) -> void:
             continue
         cast = {"skill": skill.id, "time": skill.windup, "total": skill.windup}
         return
-    if basic_timer <= 0 and companion.distance_to(target.pos) <= 78:
-        var damage = damage_for(mon, target.mon, 9, false)
-        actor_action.emit(mon, "attack", companion, target.pos)
-        hurt(target.mon, damage, target.pos)
-        basic_timer = 1.15
-        if target.mon.hp <= 0:
-            defeat_enemy(target)
 
 func damage_for(attacker: Dictionary, defender: Dictionary, power: float, special: bool) -> int:
     var attack_stats = stats(attacker)
@@ -395,6 +404,9 @@ func hurt(mon: Dictionary, amount: float, p: Vector2) -> void:
     effect.emit(p - Vector2(0, 34), "%d" % (amount - absorbed), Color("705040"))
 
 func tick_enemy(enemy: Dictionary, dt: float) -> void:
+    if enemy.mon.hp <= 0 or current().hp <= 0:
+        enemy.cast.clear()
+        return
     if not pending_capture.is_empty() and pending_capture.uid == enemy.mon.uid:
         return
     var dist = enemy.pos.distance_to(companion)
@@ -406,12 +418,20 @@ func tick_enemy(enemy: Dictionary, dt: float) -> void:
     if not clear_attack_path(enemy.pos, companion):
         enemy.cast = {}
         return
+    if dist <= 80 and enemy.attack_timer <= 0:
+        actor_action.emit(enemy.mon, "attack", enemy.pos, companion)
+        var power = float(catalog.regions[region].get("boss_basic_power", 10)) if enemy.boss else 7.0
+        hurt(current(), damage_for(enemy.mon, current(), power, false), companion)
+        enemy.attack_timer = 1.5
+        if current().hp <= 0:
+            enemy.cast.clear()
+            return
     if not enemy.cast.is_empty():
+        var skill = catalog.skills[enemy.cast.skill]
         enemy.cast.time -= dt
-        if dist > 125:
+        if dist > float(skill.range) + CAST_RANGE_GRACE:
             enemy.cast = {}
         elif enemy.cast.time <= 0:
-            var skill = catalog.skills[enemy.cast.skill]
             apply_skill(enemy.mon, current(), skill, companion)
             enemy.mon.cooldowns[skill.id] = skill.cooldown
             enemy.cast = {}
@@ -421,10 +441,6 @@ func tick_enemy(enemy: Dictionary, dt: float) -> void:
         if enemy.mon.cooldowns.get(mid, 0) <= 0 and dist <= float(skill.range) and skill.effect in ["damage", "slow"]:
             enemy.cast = {"skill": mid, "time": float(skill.windup) + .35}
             return
-    if dist <= 80 and enemy.attack_timer <= 0:
-        actor_action.emit(enemy.mon, "attack", enemy.pos, companion)
-        hurt(current(), damage_for(enemy.mon, current(), 7 if not enemy.boss else 10, false), companion)
-        enemy.attack_timer = 1.5
 
 func defeat_enemy(enemy: Dictionary) -> void:
     target_id = ""
@@ -434,11 +450,10 @@ func defeat_enemy(enemy: Dictionary) -> void:
     award_xp(15 + int(enemy.mon.level) * 7)
     if enemy.boss:
         boss_round += 1
-        if catalog.regions[region].boss_kind == "trainer" and boss_round < 3:
-            var pool = region_species()
-            var sid = pool[(boss_round * 5) % pool.size()]
-            spawn_enemy(sid, int(catalog.regions[region].boss_level), Vector2(1600, 245), true)
-            notice.emit("보스의 다음 동료가 출전합니다 · %d/3" % (boss_round + 1))
+        var lineup = boss_lineup()
+        if boss_round < lineup.size():
+            spawn_enemy(lineup[boss_round], int(catalog.regions[region].boss_level), Vector2(1600, 245), true)
+            notice.emit("보스의 다음 동료가 출전합니다 · %d/%d" % [boss_round + 1, lineup.size()])
         else:
             boss_active = false
             boss_telegraph = {}
@@ -448,7 +463,10 @@ func defeat_enemy(enemy: Dictionary) -> void:
             unlocked = mini(8, maxi(unlocked, region + 1))
             coins += 100 + region * 35
             tools += 5
-            notice.emit("%s 격파! 새로운 길이 열렸습니다." % catalog.regions[region].boss_name)
+            if region == catalog.regions.size() - 1:
+                notice.emit("마지막 시험 완료! 모든 지역에서 다시 도전할 수 있습니다.")
+            else:
+                notice.emit("%s 격파! 마을에서 M을 눌러 다음 지역으로 이동하세요." % catalog.regions[region].boss_name)
             request_autosave()
 
 func award_xp(amount: int) -> void:
@@ -582,7 +600,7 @@ func in_town() -> bool:
     return player.x < 560 and not boss_active
 
 func travel(destination: int) -> bool:
-    if destination < 0 or destination > unlocked or not in_town():
+    if destination < 0 or destination >= catalog.regions.size() or destination > unlocked or not in_town():
         return false
     region = destination
     heal_all()
@@ -590,6 +608,19 @@ func travel(destination: int) -> bool:
     notice.emit("%s에 도착했습니다." % catalog.regions[region].town)
     request_autosave()
     return true
+
+func boss_hp_multiplier() -> float:
+    var definition = catalog.regions[region]
+    return float(definition.get("boss_hp_multiplier", 2.2 if definition.boss_kind == "wild" else 1.4))
+
+func boss_lineup() -> Array:
+    var definition = catalog.regions[region]
+    if definition.has("boss_party"):
+        return definition.boss_party
+    if definition.boss_kind == "trainer":
+        var pool = region_species()
+        return [definition.boss_species, pool[5 % pool.size()], pool[10 % pool.size()]]
+    return [definition.boss_species]
 
 func start_boss() -> bool:
     if boss_active:
@@ -601,9 +632,7 @@ func start_boss() -> bool:
     boss_round = 0
     boss_clock = 3.0
     target_id = ""
-    var sid = catalog.regions[region].boss_species
-    if region == 0:
-        sid = "m013"
+    var sid = boss_lineup()[0]
     var enemy = spawn_enemy(sid, int(catalog.regions[region].boss_level), Vector2(1600, 245), true)
     command_attack(enemy.mon.uid)
     notice.emit("%s · 도전 시작" % catalog.regions[region].boss_name)
@@ -615,7 +644,7 @@ func tick_boss(dt: float) -> void:
         boss_telegraph.time -= dt
         if boss_telegraph.time <= 0:
             if companion.distance_to(boss_telegraph.pos) < boss_telegraph.radius:
-                hurt(current(), 22 + region * 5, companion)
+                hurt(current(), float(catalog.regions[region].get("boss_wave_power", 22 + region * 5)), companion)
             effect.emit(boss_telegraph.pos, "지면 파동", Color("efb978"))
             boss_telegraph.clear()
     elif boss_clock <= 0:

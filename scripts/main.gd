@@ -1,8 +1,9 @@
 extends Node2D
 const Field = preload("res://scripts/field.gd")
+const Journal = preload("res://scripts/journal.gd")
 var game = TrailGame.new()
 var field = Field.new()
-var save_directory = "user://saves"
+var save_directory = "user://pokemon-bw2010-saves"
 var session_started: bool = false
 var ui: Control
 var status: Label
@@ -12,7 +13,9 @@ var toast_timer: float = 0
 var party_buttons: Array = []
 var modal: PanelContainer
 var modal_content: VBoxContainer
+var modal_scroll: ScrollContainer
 var modal_kind: String = ""
+var journal: PanelContainer
 var was_in_town: bool = true
 var save_failed: bool = false
 var hud_panel: PanelContainer
@@ -31,17 +34,25 @@ func _ready() -> void:
     get_tree().auto_accept_quit = false
     open_menu("slots")
     refresh_hud()
+    if "--dex" in OS.get_cmdline_user_args():
+        open_menu("journal")
     if "--pixel-demo" in OS.get_cmdline_user_args():
         save_directory = "user://pixel-prototype-saves"
         choose_slot(0)
 
-func pixel_box(asset: String, margin: int = 8) -> StyleBoxTexture:
-    var box = StyleBoxTexture.new()
-    box.texture = load("res://assets/pixel/" + asset + ".png")
-    for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
-        box.set_texture_margin(side, 5)
-        box.set_content_margin(side, margin)
-    return box
+func pixel_box(asset: String, margin: int = 8) -> StyleBox:
+    var texture = field.bw.panel_texture() if asset == "panel" else field.bw.button_texture(asset in ["hover", "pressed"])
+    if texture != null:
+        var original = StyleBoxTexture.new()
+        original.texture = texture
+        for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+            original.set_texture_margin(side, 10 if asset != "panel" else 2)
+            original.set_content_margin(side, margin)
+        if asset == "panel":
+            original.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+            original.axis_stretch_vertical = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+        return original
+    return StyleBoxEmpty.new()
 
 func build_ui() -> void:
     var canvas = CanvasLayer.new()
@@ -63,14 +74,26 @@ func build_ui() -> void:
         style.content_margin_top = 4
         style.content_margin_bottom = 4
         theme.set_stylebox(state, "Button", style)
-        theme.set_color("font_" + state + "_color", "Button", Color("182820"))
-    theme.set_color("font_color", "Button", Color("182820"))
+        theme.set_color("font_" + state + "_color", "Button", Color("f8f8f8"))
+    theme.set_color("font_color", "Button", Color("f8f8f8"))
     theme.set_color("font_disabled_color", "Button", Color("a0a898"))
     theme.set_stylebox("panel", "PanelContainer", pixel_box("panel", 10))
     theme.set_stylebox("scroll", "VScrollBar", pixel_box("button", 0))
     theme.set_stylebox("grabber", "VScrollBar", pixel_box("pressed", 0))
     theme.set_stylebox("grabber_highlight", "VScrollBar", pixel_box("hover", 0))
-    theme.set_color("font_color", "Label", Color("182820"))
+    theme.set_color("font_color", "Label", Color("f8f8f8"))
+    theme.set_color("default_color", "RichTextLabel", Color("f8f8f8"))
+    theme.set_stylebox("panel", "ItemList", pixel_box("panel", 3))
+    theme.set_color("font_color", "ItemList", Color("f8f8f8"))
+    theme.set_color("font_selected_color", "ItemList", Color("fff0d0"))
+    var selected_style = pixel_box("pressed", 2)
+    theme.set_stylebox("selected", "ItemList", selected_style)
+    theme.set_stylebox("selected_focus", "ItemList", selected_style)
+    theme.set_stylebox("normal", "LineEdit", pixel_box("panel", 3))
+    theme.set_stylebox("focus", "LineEdit", pixel_box("hover", 3))
+    theme.set_color("font_color", "LineEdit", Color("f8f8f8"))
+    theme.set_color("font_placeholder_color", "LineEdit", Color("b0b8c0"))
+    theme.set_color("caret_color", "LineEdit", Color("f8f8f8"))
     ui.theme = theme
     canvas.add_child(ui)
     hud_panel = PanelContainer.new()
@@ -85,6 +108,9 @@ func build_ui() -> void:
     target_panel.size = Vector2(312, 50)
     ui.add_child(target_panel)
     target_label = Label.new()
+    target_label.custom_minimum_size.x = 292
+    target_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    target_label.add_theme_font_size_override("font_size", 10)
     target_panel.add_child(target_label)
     var menu = button(ui, "메뉴", func(): open_menu("pause"))
     menu.position = Vector2(271, 4)
@@ -101,12 +127,19 @@ func build_ui() -> void:
     toast = Label.new()
     toast.custom_minimum_size = Vector2(290, 26)
     toast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    toast.add_theme_font_size_override("font_size", 10)
     toast_panel.add_child(toast)
+    # Grow upward so wrapped notices and target details stay inside the viewport.
+    for panel in [target_panel, toast_panel]:
+        var style = pixel_box("panel", 6)
+        panel.add_theme_stylebox_override("panel", style)
+        panel.resized.connect(func(): panel.position.y = 284 - panel.size.y)
     modal = PanelContainer.new()
     modal.position = Vector2(22, 35)
     modal.size = Vector2(276, 194)
     ui.add_child(modal)
     var scroll = ScrollContainer.new()
+    modal_scroll = scroll
     scroll.custom_minimum_size = Vector2(254, 172)
     scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
     modal.add_child(scroll)
@@ -114,6 +147,12 @@ func build_ui() -> void:
     modal_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     modal_content.add_theme_constant_override("separation", 6)
     scroll.add_child(modal_content)
+    journal = Journal.new()
+    journal.position = Vector2(4, 4)
+    ui.add_child(journal)
+    journal.setup(game, field.species_art)
+    journal.closed.connect(close_menu)
+    journal.hide()
 
 func button(parent: Node, text: String, callback: Callable) -> Button:
     var b = Button.new()
@@ -138,21 +177,32 @@ func clear_menu() -> void:
         child.queue_free()
 
 func open_menu(kind: String) -> void:
-    if not session_started and kind != "slots":
+    if not session_started and kind not in ["slots", "journal"]:
         return
-    if modal.visible and modal_kind == kind and kind != "slots":
+    if (modal.visible or journal.visible) and modal_kind == kind and kind != "slots":
         close_menu()
         return
     game.paused = true
     modal_kind = kind
     field.sfx.silence()
-    modal.show()
-    render_menu()
+    if kind == "journal":
+        modal.hide()
+        journal.refresh()
+        journal.show()
+        journal.query.grab_focus()
+    else:
+        journal.hide()
+        modal.show()
+        modal_scroll.scroll_vertical = 0
+        render_menu()
     refresh_hud()
 
 func close_menu() -> void:
     if not session_started:
+        if modal_kind == "journal":
+            open_menu("slots")
         return
+    journal.hide()
     modal.hide()
     modal_kind = ""
     game.paused = false
@@ -162,13 +212,13 @@ func render_menu() -> void:
     clear_menu()
     match modal_kind:
         "slots":
-            line("새봄의 기록 / MONSTER TRAIL", 28)
-            line("새봄마을에서 잎귀와 첫 모험을 시작하세요.")
+            line("포켓몬 · 블랙·화이트", 28)
             line("저장 슬롯을 선택하세요. 이어하기는 마을에서 시작합니다.")
             for i in 3:
                 var exists = slot_exists(i)
                 button(modal_content, "%d번 · %s" % [i + 1, "이어하기" if exists else "새 모험"], func(): choose_slot(i))
-            line("WASD로 오른쪽 들판에 나가 몬스터를 클릭하세요.\n약해지면 가까이서 F로 포획 · 마을에서 E로 회복", 16)
+            button(modal_content, "649종 포켓몬 도감", func(): open_menu("journal"))
+            line("WASD로 오른쪽 들판에 나가 포켓몬을 클릭하세요.\n약해지면 가까이서 F로 포획 · 마을에서 E로 회복", 16)
         "party":
             line("동료와 가방 · 시간이 멈춰 있습니다", 25)
             line("포획 도구 %d  /  회복약 %d  /  %d 잎전" % [game.tools, game.potions, game.coins])
@@ -189,12 +239,13 @@ func render_menu() -> void:
                     button(skills_row, "%s %s\n시전 %.1fs / 재사용 %.1fs" % ["ON" if mon.enabled[s] else "OFF", skill.name, skill.windup, skill.cooldown], func(): mon.enabled[s] = not mon.enabled[s]; render_menu())
                     button(skills_row, "우선 사용", func(): mon.order.erase(s); mon.order.push_front(s); render_menu())
         "town":
-            line("새봄마을 · 여행자의 쉼터", 26)
+            line(game.catalog.regions[game.region].town + " · 포켓몬 회복", 26)
             line("%d 잎전 · 포획 도구 %d · 회복약 %d" % [game.coins, game.tools, game.potions])
             button(modal_content, "동료 모두 회복 · 무료", func(): game.heal_all(); save_progress(); show_notice("동료들이 모두 회복했습니다."); render_menu())
             button(modal_content, "포획 도구 +1 · 15 잎전", func(): purchase("tool"))
             button(modal_content, "회복약 +1 · 25 잎전", func(): purchase("potion"))
             button(modal_content, "보관함 · %d마리" % game.storage.size(), func(): open_menu("storage"))
+            button(modal_content, "다른 지역으로 이동 [M]", func(): open_menu("map"))
             button(modal_content, "마을에서 쉬며 들판 다시 탐색", func(): game.heal_all(); game.reset_field(); save_progress(); close_menu())
         "storage":
             line("보관함 · 마을에서만 교환할 수 있습니다", 25)
@@ -204,24 +255,26 @@ func render_menu() -> void:
                 button(modal_content, "%s Lv.%d · 파티로" % [game.spec(mon).name, mon.level], func(): game.trade_storage(i, game.active); render_menu())
             if game.storage.is_empty():
                 line("파티 6마리 이후에 포획한 동료가 이곳에서 쉽니다.")
-        "journal":
-            line("인연 도감 · %d / 200종" % game.caught.size(), 26)
-            line("첫 지역의 18종 설계 초안 · 그림과 생태 문장은 교정 중입니다.", 16)
-            for definition in game.catalog.species:
-                if int(definition.region) != 0:
-                    continue
-                line("%s %s · %s\n%s" % ["●" if definition.id in game.caught else "○", definition.name, definition.rank, definition.lore], 17)
         "map":
-            line("새봄의 길", 26)
-            line("서쪽: 새봄마을 (회복·상점·보관함)\n중앙: 꽃바람 들판 (잎귀 서식)\n북동쪽: 길지기의 시험 (E로 도전)")
-            line("보스까지의 방향: %s · 거리 약 %d" % ["북동쪽" if game.player.x < 1408 else "북쪽", game.player.distance_to(Vector2(1530, 300))])
-            line("전체 계획은 8지역 + 최종 지역입니다. 현재 지형은 첫 지역만 구현했습니다.")
-            if 0 in game.beaten:
-                line("새봄의 길이 열렸습니다! 다음 지역 지형은 제작 중입니다.")
+            line("하나지방 · 탐험 지역", 26)
+            line("마을에서 이동 · 시험 완료 %d/%d" % [game.beaten.size(), game.catalog.regions.size()])
+            for destination in game.catalog.regions.size():
+                var region: Dictionary = game.catalog.regions[destination]
+                var state = "현재 위치" if destination == game.region else "잠김" if destination > game.unlocked else "이동"
+                var travel_button = button(modal_content, "%s · %s%s\n%s · Lv.%d–%d" % [region.town, state, " · 시험 완료" if destination in game.beaten else "", region.name, region.level_min, region.level_max], func(): travel_to(destination))
+                travel_button.set_meta("destination", destination)
+                travel_button.disabled = destination == game.region or destination > game.unlocked or not game.in_town()
+            line("서쪽: 마을 (회복·상점·보관함)\n중앙: 야생 포켓몬 서식지\n북동쪽: 시험터 (E로 도전)")
+            line("시험터 방향: %s · 거리 약 %d" % ["북동쪽" if game.player.x < 1408 else "북쪽", game.player.distance_to(Vector2(1530, 300))])
+            line("현재 각 지역은 같은 임시 지형을 사용하며, 등장 포켓몬과 시험 편성이 바뀝니다.")
         "boss":
-            line("길지기의 시험", 26)
-            line("첫 지역 보스 전투 원형입니다. 시작하면 경기장 안에서 싸웁니다.\n전멸하면 마을에서 회복하며 소지금 5%를 사용합니다.")
-            button(modal_content, "도전 시작", begin_boss)
+            line(game.catalog.regions[game.region].boss_name, 26)
+            if game.region in game.beaten and not 8 in game.beaten:
+                line("이 지역의 시험을 완료했습니다. 마을로 돌아가 지도에서 다음 지역을 선택하세요.")
+                button(modal_content, "열린 지역 확인", func(): open_menu("map"))
+            else:
+                line("%s · Lv.%d\n시작하면 경기장 안에서 싸웁니다. 전멸하면 마을에서 회복하며 소지금 5%%를 사용합니다." % [game.catalog.regions[game.region].town, game.catalog.regions[game.region].boss_level])
+                button(modal_content, "다시 도전" if game.region in game.beaten else "도전 시작", begin_boss)
         "pause":
             line("잠시 쉬어가기", 26)
             line("저장 슬롯 %d · %.0f분 플레이\n메뉴를 닫으면 모험이 계속됩니다." % [game.save_slot + 1, game.play_time / 60])
@@ -297,6 +350,16 @@ func switch_party(index: int) -> void:
         game.switch_to(index)
         refresh_hud()
 
+func travel_to(destination: int) -> bool:
+    if not session_started or destination == game.region or not game.travel(destination):
+        show_notice("마을에서 열린 지역을 선택하세요.")
+        return false
+    was_in_town = true
+    close_menu()
+    field.advance(0, Vector2.ZERO)
+    refresh_hud()
+    return true
+
 func interact() -> void:
     if game.in_town():
         open_menu("town")
@@ -321,10 +384,10 @@ func show_notice(message: String) -> void:
     toast_panel.show()
 
 func refresh_hud() -> void:
-    status.text = "새봄마을" if game.in_town() else "꽃바람 들판"
+    status.text = game.catalog.regions[game.region].town if game.in_town() else game.catalog.regions[game.region].name
     if save_failed:
         status.text += " 저장 오류"
-    hud_panel.visible = not modal.visible
+    hud_panel.visible = not modal.visible and not journal.visible
     for i in 6:
         var b: Button = party_buttons[i]
         b.disabled = not session_started or i >= game.party.size()
@@ -334,7 +397,7 @@ func refresh_hud() -> void:
         else:
             b.text = "%d  -\n빈 자리" % (i + 1)
     var target = game.enemy_by_id(game.target_id)
-    target_panel.visible = not target.is_empty() and not modal.visible
+    target_panel.visible = not target.is_empty() and not modal.visible and not journal.visible
     target_label.text = "" if target.is_empty() else "%s HP %d/%d\n%s" % [game.spec(target.mon).name, target.mon.hp, target.max_hp, "보스 · 포획 불가" if target.boss else "F 포획 %.0f%% · 거리 %d / 220" % [game.capture_chance(target) * 100, game.player.distance_to(target.pos)]]
     if game.switch_timer > 0:
         target_label.text += "\n교체 대기 %.1f초" % game.switch_timer
@@ -353,20 +416,30 @@ func _physics_process(dt: float) -> void:
     refresh_hud()
 
 func _process(dt: float) -> void:
-    toast_panel.visible = toast_timer > 0 and not modal.visible and game.target_id.is_empty()
+    toast_panel.visible = toast_timer > 0 and not modal.visible and not journal.visible and game.target_id.is_empty()
     if toast_timer > 0:
         toast_timer -= dt
         if toast_timer <= 0:
             toast.text = ""
 
+func _input(event: InputEvent) -> void:
+    # Escape closes the journal even while its search field owns keyboard focus.
+    if journal != null and journal.visible and event is InputEventKey and event.pressed and not event.echo:
+        var key = event.physical_keycode if event.physical_keycode != 0 else event.keycode
+        if key == KEY_ESCAPE:
+            close_menu()
+            get_viewport().set_input_as_handled()
+
 func _unhandled_input(event: InputEvent) -> void:
     if event is InputEventKey and event.pressed and not event.echo:
         var key = event.physical_keycode if event.physical_keycode != 0 else event.keycode
         if key == KEY_ESCAPE:
-            if modal.visible:
+            if modal.visible or journal.visible:
                 close_menu()
             else:
                 open_menu("pause")
+            return
+        if journal.visible:
             return
         if not session_started:
             return
@@ -405,5 +478,5 @@ func _notification(what: int) -> void:
         else:
             open_menu("pause")
     elif what == NOTIFICATION_APPLICATION_FOCUS_OUT and session_started:
-        if not modal.visible:
+        if not modal.visible and not journal.visible:
             open_menu("pause")

@@ -2,7 +2,7 @@
 config_version=5
 
 [application]
-config/name="Monster Trail · 새봄의 기록"
+config/name="포켓몬 · 블랙·화이트 2010"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 

@@ -27,7 +27,7 @@ func run() -> void:
     expect(a.uid != b.uid, "individual IDs remain distinct")
     var original_ivs = a.ivs.duplicate()
     var original_branches = a.branches.duplicate()
-    a.level = 12
+    a.level = 16
     a.cooldowns[a.moves[0]] = 2.5
     expect(g.maybe_evolve(a), "evolves at threshold")
     expect(a.species_id == "m002" and a.ivs == original_ivs and a.branches == original_branches, "evolution retains IVs and branches")
@@ -36,6 +36,9 @@ func run() -> void:
     expect(g.validate_snapshot(save), "fresh snapshot validates")
     expect(g.validate_snapshot(JSON.parse_string(JSON.stringify(save))), "JSON numeric roundtrip validates")
     var malformed = save.duplicate(true)
+    malformed.version = 1
+    expect(not g.validate_snapshot(malformed), "legacy original-species save cannot silently become Pokemon")
+    malformed = save.duplicate(true)
     malformed.party[0].species_id = "not-a-species"
     expect(not g.validate_snapshot(malformed), "unknown species rejected")
     malformed = save.duplicate(true)

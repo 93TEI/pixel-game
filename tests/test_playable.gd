@@ -25,7 +25,7 @@ func run() -> void:
     var before = game.player
     game.move_player(Vector2.RIGHT, 1.0)
     expect(game.player.x > before.x, "trainer movement connected")
-    expect(main.field.blocked(Vector2(200, 420)), "house blocks actors")
+    expect(main.field.blocked(Vector2(200, 450)), "source-tile house blocks actors")
     expect(main.field.blocked(Vector2(900, 340)), "pond blocks actors")
     expect(main.field.blocked(Vector2(112, 480)), "pixel tree trunk has collision")
     expect(main.field.blocked(Vector2(160, 660)) and not main.field.blocked(Vector2(320, 660)), "fence blocks except for village gate")
